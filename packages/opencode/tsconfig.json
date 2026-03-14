@@ -18,6 +18,10 @@
         "transform": "@effect/language-service/transform",
         "namespaceImportPackages": ["effect", "@effect/*"]
       }
-    ]
+    ],
+    "incremental": true,
+    "tsBuildInfoFile": "./.tsbuildinfo",
+    "skipLibCheck": true,
+    "isolatedModules": true
   }
 }

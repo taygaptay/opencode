@@ -1333,8 +1333,24 @@ export namespace Config {
     }),
   )
 
+  // Memoized config cache with TTL (5 seconds) to avoid repeated disk reads
+  let configCache: { config: Info; timestamp: number } | null = null
+  const CONFIG_CACHE_TTL = 5000
+
   export async function get() {
-    return state().then((x) => x.config)
+    const now = Date.now()
+    if (configCache && now - configCache.timestamp < CONFIG_CACHE_TTL) {
+      return configCache.config
+    }
+
+    const config = await state().then((x) => x.config)
+    configCache = { config, timestamp: now }
+    return config
+  }
+
+  // Invalidate config cache when needed
+  export function invalidateCache() {
+    configCache = null
   }
 
   export async function getGlobal() {
@@ -1345,6 +1361,7 @@ export namespace Config {
     const filepath = path.join(Instance.directory, "config.json")
     const existing = await loadFile(filepath)
     await Filesystem.writeJson(filepath, mergeDeep(existing, config))
+    invalidateCache()
     await Instance.dispose()
   }
 

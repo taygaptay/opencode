@@ -2,19 +2,36 @@
   "$schema": "https://v2-8-13.turborepo.dev/schema.json",
   "globalEnv": ["CI", "OPENCODE_DISABLE_SHARE"],
   "globalPassThroughEnv": ["CI", "OPENCODE_DISABLE_SHARE"],
+  "remoteCache": {
+    "enabled": true
+  },
   "tasks": {
-    "typecheck": {},
+    "typecheck": {
+      "outputs": [],
+      "cache": true
+    },
     "build": {
       "dependsOn": [],
-      "outputs": ["dist/**"]
+      "outputs": ["dist/**"],
+      "cache": true
     },
     "opencode#test": {
       "dependsOn": ["^build"],
-      "outputs": []
+      "outputs": [],
+      "cache": true
     },
     "@opencode-ai/app#test": {
       "dependsOn": ["^build"],
-      "outputs": []
+      "outputs": [],
+      "cache": true
+    },
+    "lint": {
+      "outputs": [],
+      "cache": true
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true
     }
   }
 }

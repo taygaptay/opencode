@@ -19,6 +19,8 @@ import type { SessionID, MessageID } from "./schema"
 
 export namespace SessionProcessor {
   const DOOM_LOOP_THRESHOLD = 3
+  const MAX_PROCESS_ATTEMPTS = 50
+  const BACKOFF_MS = 100
   const log = Log.create({ service: "session.processor" })
 
   export type Info = Awaited<ReturnType<typeof create>>
@@ -35,6 +37,8 @@ export namespace SessionProcessor {
     let blocked = false
     let attempt = 0
     let needsCompaction = false
+    let lastToolCallTime = 0
+    let rapidCallCount = 0
 
     const result = {
       get message() {
@@ -47,8 +51,21 @@ export namespace SessionProcessor {
         log.info("process")
         needsCompaction = false
         const shouldBreak = (await Config.get()).experimental?.continue_loop_on_deny !== true
-        while (true) {
+        
+        while (attempt < MAX_PROCESS_ATTEMPTS) {
           try {
+            // Rate limiting: detect rapid tool calls and add backoff
+            const now = Date.now()
+            if (now - lastToolCallTime < 200) {
+              rapidCallCount++
+              if (rapidCallCount > 5) {
+                await new Promise((resolve) => setTimeout(resolve, BACKOFF_MS * Math.min(rapidCallCount, 10)))
+              }
+            } else {
+              rapidCallCount = 0
+            }
+            lastToolCallTime = now
+
             let currentText: MessageV2.TextPart | undefined
             let reasoningMap: Record<string, MessageV2.ReasoningPart> = {}
             const stream = await LLM.stream(streamInput)
@@ -352,9 +369,11 @@ export namespace SessionProcessor {
               if (needsCompaction) break
             }
           } catch (e: any) {
+            attempt++
             log.error("process", {
               error: e,
               stack: JSON.stringify(e.stack),
+              attempt,
             })
             const error = MessageV2.fromError(e, { providerID: input.model.providerID })
             if (MessageV2.ContextOverflowError.isInstance(error)) {
@@ -366,7 +385,6 @@ export namespace SessionProcessor {
             } else {
               const retry = SessionRetry.retryable(error)
               if (retry !== undefined) {
-                attempt++
                 const delay = SessionRetry.delay(attempt, error.name === "APIError" ? error : undefined)
                 SessionStatus.set(input.sessionID, {
                   type: "retry",
@@ -418,11 +436,24 @@ export namespace SessionProcessor {
           }
           input.assistantMessage.time.completed = Date.now()
           await Session.updateMessage(input.assistantMessage)
+          
+          // Check for doom loop (excessive attempts without progress)
+          if (attempt >= DOOM_LOOP_THRESHOLD) {
+            log.warn("doom loop detected", { attempt, threshold: DOOM_LOOP_THRESHOLD })
+            SessionStatus.set(input.sessionID, { type: "idle" })
+            return "doom_loop"
+          }
+          
           if (needsCompaction) return "compact"
           if (blocked) return "stop"
           if (input.assistantMessage.error) return "stop"
           return "continue"
         }
+        
+        // Max attempts reached
+        log.error("max attempts reached", { max: MAX_PROCESS_ATTEMPTS })
+        SessionStatus.set(input.sessionID, { type: "idle" })
+        return "max_attempts"
       },
     }
     return result

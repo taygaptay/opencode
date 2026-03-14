@@ -10,7 +10,6 @@ import { Log } from "../util/log"
 import { NamedError } from "@opencode-ai/util/error"
 import z from "zod"
 import path from "path"
-import { readFileSync, readdirSync, existsSync } from "fs"
 import * as schema from "./schema"
 import { Installation } from "../installation"
 import { Flag } from "../flag/flag"
@@ -60,27 +59,26 @@ export namespace Database {
     )
   }
 
-  function migrations(dir: string): Journal {
-    const dirs = readdirSync(dir, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)
+  async function migrations(dir: string): Promise<Journal> {
+    const entries = await Bun.$.fs.promises.readdir(dir, { withFileTypes: true })
+    const dirs = entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name)
 
-    const sql = dirs
-      .map((name) => {
+    const sql = await Promise.all(
+      dirs.map(async (name) => {
         const file = path.join(dir, name, "migration.sql")
-        if (!existsSync(file)) return
-        return {
-          sql: readFileSync(file, "utf-8"),
-          timestamp: time(name),
-          name,
+        try {
+          const sql = await Bun.file(file).text()
+          return { sql, timestamp: time(name), name }
+        } catch {
+          return null
         }
-      })
-      .filter(Boolean) as Journal
+      }),
+    )
 
-    return sql.sort((a, b) => a.timestamp - b.timestamp)
+    return sql.filter(Boolean).sort((a, b) => a.timestamp - b.timestamp) as Journal
   }
 
-  export const Client = lazy(() => {
+  export const Client = lazy(async () => {
     log.info("opening database", { path: Path })
 
     const sqlite = new BunDatabase(Path, { create: true })
@@ -99,7 +97,7 @@ export namespace Database {
     const entries =
       typeof OPENCODE_MIGRATIONS !== "undefined"
         ? OPENCODE_MIGRATIONS
-        : migrations(path.join(import.meta.dirname, "../../migration"))
+        : await migrations(path.join(import.meta.dirname, "../../migration"))
     if (entries.length > 0) {
       log.info("applying migrations", {
         count: entries.length,

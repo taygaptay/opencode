@@ -4,3 +4,17 @@ exact = true
 [test]
 root = "./do-not-run-tests-from-root"
 
+[build]
+# Enable build caching for faster incremental builds
+cache = true
+
+# Optimize bundle output
+minify = true
+treeShaking = true
+
+# Use multiple workers for parallel builds
+workers = 4
+
+# Preload frequently used modules
+preload = ["@opencode-ai/util", "@opencode-ai/sdk"]
+
